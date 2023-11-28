@@ -1,0 +1,140 @@
+default:
+  image:
+    name:                       "registry.gitlab.com/gitlab-org/terraform-images/stable:latest"
+  retry:                        2
+
+variables:
+  ANSIBLE_VAULT_PASS:
+    description:                "ANSIBLE_VAULT_PASS"
+    value:                      ""
+  TF_STATE_NAME:                "devlopment"
+  TF_ADDRESS:                   "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+  TF_ROOT:                      "${CI_PROJECT_DIR}"
+  TF_HTTP_PASSWORD:             "${GITLAB_TOKEN}"
+  TF_HTTP_USERNAME:             "${GITLAB_USERNAME}"
+  TFVARS_FILE:                  "variables.auto.tfvars"
+  AMI:                          "ami-008bcc0a51a849165"
+  INSTANCE_TYPE:                "t3.small"
+  GITLAB_USERNAME:              "khaledelg"
+  DEPLOY_CLUSTER:               "yes"
+  RESET_CLUSTER:                "no"
+  CLEANUP_AFTER_APPLY:          "yes"
+
+stages:
+ - decrypt
+ - tfvars
+ - init
+ - validate
+ - plan
+ - apply
+ - output
+ - deployment
+ - destroy
+
+cache:
+  untracked: true
+
+before_script:
+  - cd ${TF_ROOT}
+
+decrypt:
+  image:
+    name: registry.hub.docker.com/cytopia/ansible:latest-tools
+  stage: decrypt
+  script:
+    - ansible-vault decrypt secrets.txt --vault-password-file <(echo "${ANSIBLE_VAULT_PASS}")
+  artifacts:
+    reports:
+      dotenv: secrets.txt
+
+tfvars:
+  stage: tfvars
+  script:
+    - |
+      VARIABLES=""
+      VARIABLES="${VARIABLES}ami=\"${AMI}\"\n"
+      VARIABLES="${VARIABLES}instance_type=\"${INSTANCE_TYPE}\"\n"
+      VARIABLES="${VARIABLES}public_key=\"${AWS_EC2_PUBLIC_KEY}\"\n"
+      TFVARS_FILE="${TFVARS_FILE}"
+      echo -e "$VARIABLES" > "$TFVARS_FILE"
+      echo "Les variables ont été écrites dans le fichier $TFVARS_FILE."
+
+init:
+  stage: init
+  script:
+    - gitlab-terraform init -var-file=variables.auto.tfvars
+
+validate:
+  stage: validate
+  script:
+    - gitlab-terraform validate
+
+plan:
+  stage: plan
+  resource_group: ${TF_STATE_NAME}
+  script:
+    - gitlab-terraform plan
+    - gitlab-terraform plan-json
+  artifacts:
+    name: plan
+    reports:
+      terraform: ${TF_ROOT}/plan.json
+
+apply:
+  stage: apply
+  needs:
+    - plan
+    - decrypt
+  resource_group: ${TF_STATE_NAME}
+  variables:
+    GITLAB_PASSWORD: ${GITLAB_TOKEN}
+  script:
+    - gitlab-terraform apply
+  when: manual
+
+output:
+  stage: output
+  needs:
+    - apply
+    - decrypt
+  resource_group: ${TF_STATE_NAME}
+  variables:
+    TF_OUTPUT_FILE: terraform_outputs.env
+  script:
+    - |
+      OUTPUT_PUBLIC_IP=$(gitlab-terraform output -raw public_ip)
+      echo "OUTPUT_PUBLIC_IP=${OUTPUT_PUBLIC_IP}" > $TF_OUTPUT_FILE
+  artifacts:
+    reports:
+      dotenv: $TF_OUTPUT_FILE
+
+destroy:
+  stage: destroy
+  needs:
+    - output
+    - decrypt
+  resource_group: ${TF_STATE_NAME}
+  variables:
+    GITLAB_PASSWORD: ${GITLAB_TOKEN}
+  rules:
+    - if: $CLEANUP_AFTER_APPLY == "yes"
+  script:
+    - gitlab-terraform destroy
+  when: manual
+
+deployment:
+  stage: deployment
+  needs:
+    - output
+    - decrypt
+  variables:
+    PUBLIC_IP: "${OUTPUT_PUBLIC_IP}"
+    INPUT_RESET_CLUSTER: "${RESET_CLUSTER}"
+    INPUT_DEPLOY_CLUSTER: "${DEPLOY_CLUSTER}"
+    PRIVATE_KEY: "${AWS_EC2_PRIVATE_KEY}"
+    PRIVATE_AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+    PRIVATE_AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+  trigger:
+    project: kelg/aws/ansible/deploy-k3s
+    branch: develop
+  when: manual
