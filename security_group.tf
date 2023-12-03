@@ -1,6 +1,6 @@
 resource "aws_security_group" "dots_security_group" {
 
-  name                        = "dots_security_group"
+  name                        = var.security_group_name
 
   vpc_id                      = aws_vpc.dots_vpc.id
 

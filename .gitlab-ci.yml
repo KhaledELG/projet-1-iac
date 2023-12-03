@@ -1,51 +1,61 @@
+workflow:
+  name: $INSTANCE_NAME-${TF_TAG}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'web'
+
 default:
   image:
     name:                       "registry.gitlab.com/gitlab-org/terraform-images/stable:latest"
   retry:                        2
 
 variables:
-  ANSIBLE_VAULT_PASS:
-    description:                "ANSIBLE_VAULT_PASS"
-    value:                      ""
-  TF_STATE_NAME:                "devlopment"
-  TF_ADDRESS:                   "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+  GITLAB_USERNAME:              "KhaledELG"
+  TF_ADDRESS:                   "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}-${TF_TAG}"
   TF_ROOT:                      "${CI_PROJECT_DIR}"
-  TF_HTTP_PASSWORD:             "${GITLAB_TOKEN}"
-  TF_HTTP_USERNAME:             "${GITLAB_USERNAME}"
+  TF_PASSWORD:                  "${GITLAB_TOKEN}"
+  TF_USERNAME:                  "${GITLAB_USERNAME}"
   TFVARS_FILE:                  "variables.auto.tfvars"
-  AMI:                          "ami-008bcc0a51a849165"
-  INSTANCE_TYPE:                "t3.small"
-  GITLAB_USERNAME:              "khaledelg"
-  DEPLOY_CLUSTER:               "yes"
-  RESET_CLUSTER:                "no"
-  CLEANUP_AFTER_APPLY:          "yes"
+  TF_STATE_NAME:                "devlopment-dots_srv"
+  INSTANCE_NAME:                "dots_srv"
+  EIP_NAME:                     "dots_eip"
+  IGW_NAME:                     "dots_igw"
+  NETWORK_INTERFACE_NAME:       "dots_network_interface"
+  ROUTE_TABLE_NAME:             "dots_route_table"
+  SECURITY_GROUP_NAME:          "dots_security_group"
+  SUBNET_NAME:                  "dots_subnet"
+  VPC_NAME:                     "dots_vpc"
+  PUBLIC_KEY_NAME:              "dots_public_key_name"
+  TF_TAG:
+    description:                "Tag that will be put after all ressources name"
+    value:                      "0002"
+  DEPLOY_INSTANCE:
+    description:                "Deploy Cluster"
+    value:                      "yes"
+  CLEANUP_AFTER_APPLY:
+    description:                "Cleanup After Apply"
+    value:                      "yes"
+  AMI:
+    description:                "Amazon Machine Image (AMI) ID"
+    value:                      "ami-008bcc0a51a849165"
+  INSTANCE_TYPE:
+    description:                "Instance Type"
+    value:                      "t3.small"
+
+cache:
+  key: $TF_STATE_NAME-$TF_TAG
+  untracked: true
 
 stages:
- - decrypt
  - tfvars
  - init
  - validate
  - plan
  - apply
  - output
- - deployment
  - destroy
-
-cache:
-  untracked: true
 
 before_script:
   - cd ${TF_ROOT}
-
-decrypt:
-  image:
-    name: registry.hub.docker.com/cytopia/ansible:latest-tools
-  stage: decrypt
-  script:
-    - ansible-vault decrypt secrets.txt --vault-password-file <(echo "${ANSIBLE_VAULT_PASS}")
-  artifacts:
-    reports:
-      dotenv: secrets.txt
 
 tfvars:
   stage: tfvars
@@ -54,15 +64,39 @@ tfvars:
       VARIABLES=""
       VARIABLES="${VARIABLES}ami=\"${AMI}\"\n"
       VARIABLES="${VARIABLES}instance_type=\"${INSTANCE_TYPE}\"\n"
+      VARIABLES="${VARIABLES}instance_name=\"${INSTANCE_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}eip_name=\"${EIP_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}igw_name=\"${IGW_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}network_interface_name=\"${NETWORK_INTERFACE_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}route_table_name=\"${ROUTE_TABLE_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}security_group_name=\"${SECURITY_GROUP_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}subnet_name=\"${SUBNET_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}vpc_name=\"${VPC_NAME}-${TF_TAG}\"\n"
+      VARIABLES="${VARIABLES}public_key_name=\"${PUBLIC_KEY_NAME}-${TF_TAG}\"\n"
       VARIABLES="${VARIABLES}public_key=\"${AWS_EC2_PUBLIC_KEY}\"\n"
       TFVARS_FILE="${TFVARS_FILE}"
       echo -e "$VARIABLES" > "$TFVARS_FILE"
       echo "Les variables ont été écrites dans le fichier $TFVARS_FILE."
+  artifacts:
+    paths:
+      - $TFVARS_FILE
+    expire_in: 1h
 
 init:
   stage: init
   script:
-    - gitlab-terraform init -var-file=variables.auto.tfvars
+    - |
+      export GITLAB_ACCESS_TOKEN=$GITLAB_TOKEN
+      export TF_STATE_NAME=$TF_STATE_NAME-$TF_TAG
+      gitlab-terraform init \
+          -backend-config="address=https://gitlab.com/api/v4/projects/52629815/terraform/state/$TF_STATE_NAME-$TF_TAG" \
+          -backend-config="lock_address=https://gitlab.com/api/v4/projects/52629815/terraform/state/$TF_STATE_NAME-$TF_TAG/lock" \
+          -backend-config="unlock_address=https://gitlab.com/api/v4/projects/52629815/terraform/state/$TF_STATE_NAME-$TF_TAG/lock" \
+          -backend-config="username=KhaledELG" \
+          -backend-config="password=$GITLAB_ACCESS_TOKEN" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=DELETE" \
+          -backend-config="retry_wait_min=5"
 
 validate:
   stage: validate
@@ -71,70 +105,34 @@ validate:
 
 plan:
   stage: plan
-  resource_group: ${TF_STATE_NAME}
+  resource_group: ${TF_STATE_NAME}-${TF_TAG}
   script:
     - gitlab-terraform plan
     - gitlab-terraform plan-json
   artifacts:
-    name: plan
-    reports:
-      terraform: ${TF_ROOT}/plan.json
+    paths:
+      - ${TF_ROOT}/plan.json
 
 apply:
   stage: apply
   needs:
     - plan
-    - decrypt
-  resource_group: ${TF_STATE_NAME}
+  resource_group: ${TF_STATE_NAME}-${TF_TAG}
   variables:
     GITLAB_PASSWORD: ${GITLAB_TOKEN}
+  rules:
+    - if: $DEPLOY_INSTANCE == "yes"
   script:
     - gitlab-terraform apply
   when: manual
 
-output:
-  stage: output
-  needs:
-    - apply
-    - decrypt
-  resource_group: ${TF_STATE_NAME}
-  variables:
-    TF_OUTPUT_FILE: terraform_outputs.env
-  script:
-    - |
-      OUTPUT_PUBLIC_IP=$(gitlab-terraform output -raw public_ip)
-      echo "OUTPUT_PUBLIC_IP=${OUTPUT_PUBLIC_IP}" > $TF_OUTPUT_FILE
-  artifacts:
-    reports:
-      dotenv: $TF_OUTPUT_FILE
-
 destroy:
   stage: destroy
-  needs:
-    - output
-    - decrypt
-  resource_group: ${TF_STATE_NAME}
+  resource_group: ${TF_STATE_NAME}-${TF_TAG}
   variables:
     GITLAB_PASSWORD: ${GITLAB_TOKEN}
   rules:
     - if: $CLEANUP_AFTER_APPLY == "yes"
   script:
     - gitlab-terraform destroy
-  when: manual
-
-deployment:
-  stage: deployment
-  needs:
-    - output
-    - decrypt
-  variables:
-    PUBLIC_IP: "${OUTPUT_PUBLIC_IP}"
-    INPUT_RESET_CLUSTER: "${RESET_CLUSTER}"
-    INPUT_DEPLOY_CLUSTER: "${DEPLOY_CLUSTER}"
-    PRIVATE_KEY: "${AWS_EC2_PRIVATE_KEY}"
-    PRIVATE_AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-    PRIVATE_AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-  trigger:
-    project: kelg/aws/ansible/deploy-k3s
-    branch: develop
   when: manual

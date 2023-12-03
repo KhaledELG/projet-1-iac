@@ -5,6 +5,6 @@ output "public_ip" {
 }
 
 output "instance_id" {
-  value                       = aws_instance.dots-srv-0001.id
+  value                       = aws_instance.dots-srv.id
   description                 = "Instance ID"
 }

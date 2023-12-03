@@ -1,4 +1,4 @@
-resource "aws_instance" "dots-srv-0001" {
+resource "aws_instance" "dots-srv" {
 
   ami                         = var.ami
 
@@ -26,7 +26,7 @@ resource "aws_instance" "dots-srv-0001" {
   }
 
   tags = {
-    Name                      = "dots-srv-0001",
+    Name                      = var.instance_name,
   }
 
 }

@@ -8,7 +8,7 @@ resource "aws_route_table" "dots_route_table" {
   }
 
   tags = {
-    Name                      = "dots_route_table"
+    Name                      = var.route_table_name
   }
   
 }

@@ -7,7 +7,7 @@ resource "aws_network_interface" "dots_network_interface" {
   security_groups             = [aws_security_group.dots_security_group.id]
 
   tags = {
-    Name                      = "dots_network_interface"
+    Name                      = var.network_interface_name,
   }
   
 }

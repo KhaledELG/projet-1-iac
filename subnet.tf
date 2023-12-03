@@ -7,7 +7,7 @@ resource "aws_subnet" "dots_subnet" {
   availability_zone           = "eu-west-3a"
 
   tags = {
-    Name                      = "dots_subnet"
+    Name                      = var.subnet_name
   }
   
 }
