@@ -1,3 +1,0 @@
-# Ignore les clefs ssh
-ansible_key*
-secrets*
